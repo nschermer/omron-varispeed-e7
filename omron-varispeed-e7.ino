@@ -85,7 +85,7 @@ void loop () {
         break;
 
       case 2:
-        lcd.print(F("Mode: Tapping       "));
+        lcd.print(F("Mode: Threading     "));
         print_tapping ();
         break;
     }
@@ -260,7 +260,7 @@ void error_handler(int line) {
 void print_tapping () {
   char buf[8] = { 0 };
 
-  lcd.setCursor(15, 0);
+  lcd.setCursor(16, 0);
   snprintf (buf, sizeof(buf), "%3d%%", min (tapping_rev_perc, 999));
   lcd.print(buf);
 }

@@ -247,7 +247,7 @@ void loop () {
       }
     }
 
-    /* debug helper (0 clear line, -1 no action, >0 print number) */
+    /* debug helper (-1 no action, 0 clear line, >0 print number) */
     if (error_linenr != -1) {
       lcd.setCursor(0, 3);
       if (error_linenr > 0) {

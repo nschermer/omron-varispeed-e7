@@ -13,10 +13,14 @@
 #define VFD_HZ_UNITS(hz)    (constrain((hz), VFD_MIN_HZ, VFD_MAX_HZ) * 100) /* o1-03 = 0 */
 
 /* Rotory encoder */
-#define ROTARY_PIN_CLK  5
-#define ROTARY_PIN_DT   6
+#define ROTARY_PIN_CLK  6
+#define ROTARY_PIN_DT   5
 #define ROTARY_PIN_SW   4
 #define ROTARY_CPS      4 /* clicks per step */
+
+/* Analog value filter */
+#define KALMAN_ERR_MEASURE 4
+#define KALMAN_NOISE       0.01
 
 #define UNUSED __attribute__((unused))
 
@@ -59,8 +63,8 @@ void setup() {
 }
 
 void loop () {
-  int n;
-  unsigned long currentMillis = millis();
+  float meas_pot;
+  int ref_new;
   char buf[16] = { 0 };
   uint16_t status[8] = { 0 };
 
@@ -104,21 +108,20 @@ void loop () {
 
     menu_update = false;
     last_inverter_status = 0;
+
+    /* next round */
+    return;
   }
 
-  /* analog value to 0 - 100% */
-  n = map (analogRead(A0), 0, 1023, 10, 100);
-  if (ref_frequency != n) {
-    /* avoid excessive screen updates */
-    if (potmeterMillis == 0)
-      potmeterMillis = currentMillis;
-  }
+  /* analog value kalman filter update */
+  meas_pot = kalman_filter (analogRead(A0));
 
-  if (potmeterMillis != 0
-      && currentMillis - potmeterMillis >= 100) {
-    if (ref_frequency != n) {
+  /* check if we need to udpate freq */
+  if (millis() - potmeterMillis >= 100) {
+    ref_new = map(meas_pot, 0, 1023, VFD_MIN_HZ, VFD_MAX_HZ);
+    if (ref_frequency != ref_new) {
       /* update value */
-      ref_frequency = n;
+      ref_frequency = ref_new;
 
       /* update setpoint on VFD */
       if (!memobus_write_register(0x0002, VFD_HZ_UNITS(ref_frequency))) {
@@ -129,23 +132,25 @@ void loop () {
       lcd.print(VFD_HZ_TO_RPM(ref_frequency));
       if (ref_frequency < (1000 / VFD_HZ_TO_RPM(1)))
         lcd.print(" ");
+
+      /* only 1 memobus action per loop() */
+      return;
     }
 
-    /* stop timeout */
-    potmeterMillis = 0;
+    potmeterMillis = millis();
   }
 
 #if MEMOBUS_LOOPBACK
   /* loopcheck after 80% of CE time expired */
-  if (currentMillis - loopbackMillis >= MEMOBUS_CE_TIME * 0.8) {
+  if (millis() - loopbackMillis >= MEMOBUS_CE_TIME * 0.8) {
     if (!memobus_loopback_test()) {
       error_handler(__LINE__);
     }
-    loopbackMillis = currentMillis;
+    loopbackMillis = millis();
   }
 #endif
 
-  if (currentMillis - statusFastMillis >= 250) {
+  if (millis() - statusFastMillis >= 250) {
     /* read status */
     if (memobus_read_register (0x0020, sizeof(status), status)) {
 
@@ -166,13 +171,13 @@ void loop () {
         if (mode == 2) {
           /* forward to reverse speed */
           if (INT_NTH_BIT (status[0], 1)) {
-            n = ref_frequency * tapping_rev_perc / 100;
+            ref_new = ref_frequency * tapping_rev_perc / 100;
           } else {
-            n = ref_frequency;
+            ref_new = ref_frequency;
           }
 
           /* update setpoint on VFD */
-          if (!memobus_write_register(0x0002, VFD_HZ_UNITS(n))) {
+          if (!memobus_write_register(0x0002, VFD_HZ_UNITS(ref_new))) {
             error_handler(__LINE__);
           }
         }
@@ -202,9 +207,13 @@ void loop () {
       }
     }
 
-    statusFastMillis = currentMillis;
+    statusFastMillis = millis();
 
-  } else if (currentMillis - statusSlowMillis >= 1000) {
+    /* only 1 memobus action per loop() */
+    return;
+  }
+
+  if (millis() - statusSlowMillis >= 1000) {
     /* read status */
     if (memobus_read_register (0x0031, 1, status)) {
       lcd.setCursor(14, 3);
@@ -220,8 +229,23 @@ void loop () {
       lcd.print(F("   "));
     error_linenr = 0;
 
-    statusSlowMillis = currentMillis;
+    statusSlowMillis = millis();
   }
+}
+
+float
+kalman_filter(int measured) {
+  static float err_estimate = KALMAN_ERR_MEASURE;
+  static float last_estimate = measured;
+  float kalman_gain;
+  float current_estimate;
+
+  kalman_gain = err_estimate / (err_estimate + KALMAN_ERR_MEASURE);
+  current_estimate = last_estimate + kalman_gain * (measured - last_estimate);
+  err_estimate =  (1.0 - kalman_gain) * err_estimate + fabs(last_estimate - current_estimate) * KALMAN_NOISE;
+  last_estimate = current_estimate;
+
+  return current_estimate;
 }
 
 void error_handler(int line) {

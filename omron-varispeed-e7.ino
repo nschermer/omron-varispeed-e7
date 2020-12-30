@@ -34,9 +34,13 @@ bool     menu_update = true;
 int      mode = 0;
 int      ref_frequency = 0;
 int      tapping_rev_perc = 150;
-int      error_linenr = 0;
-uint16_t last_inverter_status = 0;
+int      error_linenr = -1;
 int      fail_counter = 8; /* no fail first run */
+
+uint16_t last_inverter_status = 0;
+int      last_inverter_ref = -1;
+double   last_inverter_kw = -1;
+int      last_dc_bus = -1;
 
 /* update timers */
 #if MEMOBUS_LOOPBACK
@@ -67,6 +71,9 @@ void loop () {
   int ref_new;
   char buf[16] = { 0 };
   uint16_t status[8] = { 0 };
+  int inverter_ref;
+  double inverter_kw;
+  int dc_bus;
 
   button.loop();
   encoder.loop();
@@ -77,15 +84,15 @@ void loop () {
 
     switch (mode) {
       case 0:
-        lcd.print(F("Mode: Decelerate    "));
+        lcd.print(F("Mode: Decelerate"));
         break;
 
       case 1:
-        lcd.print(F("Mode: Brake         "));
+        lcd.print(F("Mode: Brake"));
         break;
 
       case 2:
-        lcd.print(F("Mode: Threading     "));
+        lcd.print(F("Mode: Threading"));
         print_tapping ();
         break;
     }
@@ -108,6 +115,9 @@ void loop () {
 
     menu_update = false;
     last_inverter_status = 0;
+    last_inverter_ref = -1;
+    last_inverter_kw = -1;
+    last_dc_bus = -1;
 
     /* next round */
     return;
@@ -119,6 +129,7 @@ void loop () {
   /* check if we need to udpate freq */
   if (millis() - potmeterMillis >= 100) {
     ref_new = map(meas_pot, 0, 1023, VFD_MIN_HZ, VFD_MAX_HZ);
+
     if (ref_frequency != ref_new) {
       /* update value */
       ref_frequency = ref_new;
@@ -186,16 +197,26 @@ void loop () {
       }
 
       /* Output frequency */
-      lcd.setCursor(14, 2);
-      snprintf(buf, sizeof(buf), "%3dHz", min (status[4] / 100, 999));
-      lcd.print(buf);
+      inverter_ref = min (status[4] / 100, 999);
+      if (last_inverter_ref != inverter_ref) {
+        lcd.setCursor(14, 2);
+        snprintf(buf, sizeof(buf), "%3dHz", inverter_ref);
+        lcd.print(buf);
+
+        last_inverter_ref = inverter_ref;
+      }
 
       /* Output power */
-      lcd.setCursor(6, 3);
-      lcd.print((double) min (status[7], 99) / 10, 1);
-      lcd.print(F("kW"));
+      inverter_kw = (double) min (status[7], 99) / 10;
+      if (last_inverter_kw != inverter_kw) {
+        lcd.setCursor(6, 3);
+        lcd.print(inverter_kw, 1);
+        lcd.print(F("kW"));
 
-      /* reset afil counter */
+        last_inverter_kw = inverter_kw;
+      }
+
+      /* reset fail counter */
       fail_counter = 0;
     } else {
       /* count fails */
@@ -216,18 +237,27 @@ void loop () {
   if (millis() - statusSlowMillis >= 1000) {
     /* read status */
     if (memobus_read_register (0x0031, 1, status)) {
-      lcd.setCursor(14, 3);
-      snprintf(buf, sizeof(buf), "%3dVDC", min(status[0], 999));
-      lcd.print(buf);
+      dc_bus = min(status[0], 999);
+      if (last_dc_bus != dc_bus) {
+        lcd.setCursor(14, 3);
+        snprintf(buf, sizeof(buf), "%3dVDC", dc_bus);
+        lcd.print(buf);
+
+        last_dc_bus = dc_bus;
+      }
     }
 
-    /* debug helper */
-    lcd.setCursor(0, 3);
-    if (error_linenr != 0)
-      lcd.print(error_linenr);
-    else
-      lcd.print(F("   "));
-    error_linenr = 0;
+    /* debug helper (0 clear line, -1 no action, >0 print number) */
+    if (error_linenr != -1) {
+      lcd.setCursor(0, 3);
+      if (error_linenr > 0) {
+        lcd.print(error_linenr);
+        error_linenr = 0;
+      } else {
+        lcd.print(F("   "));
+        error_linenr = -1;
+      }
+    }
 
     statusSlowMillis = millis();
   }

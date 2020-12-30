@@ -125,7 +125,7 @@ bool memobus_read_register(uint16_t start_address, uint16_t quantity, uint16_t *
   /* buffer reply size (response message has 5 items + 2 for each register) */
   bufsize = 5 + 2 * quantity;
 
-  /* check if our static buffer is bug enough */
+  /* check if our static buffer is big enough this way we avoid malloc/free */
   if (bufsize > sizeof(buf)) {
     error_handler(__LINE__);
     return false;
